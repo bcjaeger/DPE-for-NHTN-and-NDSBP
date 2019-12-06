@@ -1,0 +1,234 @@
+---
+title: "Data processing documentation"
+author: "Byron Jaeger"
+date: "February 7, 2019"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+from_cran <- c("haven","magrittr","dplyr","purrr","diagram")
+
+# check the installs:
+for (pkg in from_cran)
+  library(pkg, character.only = TRUE)
+
+```
+
+# CARDIA data processing file
+
+This file contains the following: 
+
+* Source codes used to merge CARDIA data, documented with my comments and placed in code blocks interspersed throughout the document. 
+* Source codes used to make exclusions, accompanied by a step-by-step description of the exclusions (see final section)
+* Source codes used to derive variables along with my comments. 
+* plain text that accompanies this code and describes its purpose. 
+
+This file is also reproducible using Rstudio and Rmarkdown. Steps: 
+
+1. Create a new R project directory
+2. Save datafiles in this directory within a folder that is named "Datasets"
+3. Open the accompanying .Rmd file.
+4. Run the following setup code:
+
+```{r, eval=FALSE}
+
+# Install and load packages -----------------------------------------------
+
+# If you have any issues with the installs, please contact me at:
+# bcjaeger@uab.edu
+
+from_cran <- c("haven","magrittr","dplyr","purrr","diagram")
+
+install.packages(from_cran, repos = "http://cran.rstudio.com")
+
+# check the installs:
+for (pkg in from_cran)
+  library(pkg, character.only = TRUE)
+
+
+```
+5. Run the accompanying .Rmd file.
+6. If you have any trouble, contact me at bcjaeger@uab.edu
+
+# CARDIA data processing
+
+## Step 1: read in the data
+
+```{r}
+
+data=cardia=list()
+
+# Read files from CARDIA ancillary ABPM study
+# These paths will not work on your computer, but the files 
+# should be available in the CARDIA database
+schwartz_abpm_loc=file.path(
+  'O:','REGARDS','CARDIA','Data','Population','ABPM_Schwartz'
+)
+
+uab_slp=read_sas(
+  file.path(
+    schwartz_abpm_loc,'final_summary_dataset_uab_v1.sas7bdat'
+  )
+)
+
+nw_slp<-read_sas(
+  file.path(
+    schwartz_abpm_loc,'final_summary_dataset_nw_v1.sas7bdat'
+  )
+)
+
+cardia$slp=rbind(uab_slp,nw_slp) 
+
+```
+
+## Step 2: Outline the exclusion steps
+
+```{r}
+
+# initialize exclusion info
+nobs=labs=list()
+
+nobs[[1]]=5115
+labs[[1]]="CARDIA participants"
+
+nobs[[2]]=nrow(cardia$slp)
+labs[[2]]="Participants who underwent \n24-hour ABPM"
+
+# remove participants with insufficient sleep readings
+
+cardia$slp%<>%
+  dplyr::filter(GE_5_Valid_sleep==1,
+                GE_10_Valid_awake==1) 
+
+nobs[[3]]=nrow(cardia$slp)
+labs[[3]]="Participants with \u2265 10 awake \nand \u2265 5 asleep ABPM readings"
+
+```
+
+## Step 3: Apply data processing steps
+
+```{r}
+
+# some variable derivations for BP during sleep
+cardia$slp %<>%
+  dplyr::select(id,
+                slp_sbp=mn_sysbp_SL,
+                pct_dip_sbp=Pct_sysbp_dip,
+                slp_dbp=mn_diabp_SL,
+                slp_dur=sleep_duration) %>%
+  dplyr::mutate(nhtn=ifelse(slp_dbp>=70|slp_sbp>=120,1,0),
+                ndbp=ifelse(pct_dip_sbp<10, 1,0),
+                slp_dur=as.numeric(slp_dur)/60^2)
+
+exclusion_cascade=list(cardia=list(labs=labs,nobs=nobs))
+
+# read in ABPM forms
+cardia$abpm_forms <- 
+  read_sas(file.path('O:','REGARDS','JHS','Jaeger',
+                     'Miscellaneous','Swati',
+                     'cardia_abpm_781_updated.sas7bdat')) %>% 
+  set_names(tolower(names(.))) %>%
+  dplyr::select(id=short_id,age,neck_cm,htn_meds)
+
+# Read in data from my CARDIA data request
+cardia$data_forms <- 
+  read_sas(file.path("O:","REGARDS","CARDIA","Data","Population",
+                     "A1808 REQ 4 11 2018 (Byron Jaeger)",
+                     "a1808req4_11_2018.sas7bdat")) %>%
+  magrittr::set_names(tolower(names(.))) %>% 
+  dplyr::filter(short_id%in%cardia$slp$id) %>% 
+  # variable derivations
+  dplyr::mutate(
+    race=factor(ifelse(a01race1==5,'White','Black')),
+    sex=factor(ifelse(a01sex==1,'Male','Female')),
+    alcohol=factor(ifelse(i07drink==1,'None','Some')),
+    smoke=factor(i10smoke,levels=c(0,1,2),
+                 labels=c("Never","Former","Current")),
+    diabetes=ifelse(i08diab==1,0,
+                    ifelse(i08diab==2,1,NA)),
+    acr=ifelse(il1ratio>30, 1, 0))%>%
+  # variable selection and re-naming
+  dplyr::select(id=short_id,
+                sex=sex,
+                race=race,
+                educ=i03ed,
+                alcohol,
+                smoke,
+                height_cm=i20hgt,
+                weight_lbs=i20wgt,
+                waist_cm=i20wst,
+                cln_sbp=i02savg,
+                cln_dbp=i02davg,
+                ur_cre=il1ucreat,
+                ur_alb=il1ualb,
+                acr=acr,
+                egfr=il7gfr,
+                hba1c=i0yhba1c,
+                ldl=il1ldl,
+                hdl=il1hdl,
+                chol=il1chol,
+                glucose=il7glu,
+                diabetes) %>%
+  mutate(ur_alb=ur_alb*1000)
+
+# setting some very questionnable neck circumference values to NA
+cardia$abpm_forms$neck_cm[cardia$abpm_forms$neck_cm<20]=NA
+cardia$abpm_forms$neck_cm[cardia$abpm_forms$neck_cm>400]=NA
+
+# Merge all of the data by id
+data$cardia=reduce(cardia,left_join,by='id')%>%dplyr::select(-id)%>%
+  mutate(hispanic=0,race=as.character(race))
+
+glimpse(data$cardia)
+
+```
+
+## Step 4: Print exclusion chart
+
+```{r, fig.width=8, fig.height=10}
+
+plot_exclusion_cascade <- function(nobs, labs){
+  
+  par(mar = c(1, 1, 1, 1))
+  nrows=length(nobs)
+  openplotmat()
+  pos<-coordinates(rep(1,nrows))
+  
+  for(i in 1:nrows){
+    
+    if(i<nrows){
+      Arrows(x0=pos[i,1],y0=pos[i,2]-1/(nrows*3.8),
+             x1=pos[i+1,1],y1=pos[i+1,2]+1/(nrows*3.8),lwd=2)
+    }
+    textrect(mid = pos[i,], radx = 1/2, rady = 1/(nrows*4),
+             lab = paste0(labs[[i]],'\n N = ',format(nobs[[i]],big.mark=',')), 
+             box.col='white', col='black',
+             cex = 2, shadow.size = 0.001)
+    
+  }
+}
+
+plot_exclusion_cascade(nobs, labs)
+
+```
+
+
+# Computing environment
+
+Please find information about the computing environment used to create this file below:
+
+  * File creation date: `r Sys.Date()`
+  * `r R.version.string`
+  * R version (short form): `r getRversion()`
+  * `mosaic` package version: `r packageVersion("mosaic")`
+  * Additional session information
+
+```{r echo=FALSE}
+sessionInfo()  # could use devtools::session_info() if you prefer that
+```
+  

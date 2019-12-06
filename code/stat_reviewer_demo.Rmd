@@ -1,0 +1,49 @@
+---
+title: "Untitled"
+author: "Byron C. Jaeger"
+date: "10/8/2019"
+output:
+  word_document: default
+  html_document: default
+---
+
+Let $X$ ~ $N(1, 1)$ and let $Y$ ~ $N(0, 1)$ with $Cov(X,Y) = 9/10$.
+
+
+```{r}
+
+library(MASS)
+
+covmat <- matrix(data = c(1, 9/10, 9/10, 1), nrow = 2)
+
+data <- mvrnorm(n = 10000000, Sigma = covmat, mu = c(1, 0))
+
+x <- data[,1]
+y <- data[,2]
+
+```
+
+An approximate 95% confidence interval for $X$ is (-0.96, 2.96)
+
+```{r}
+
+quantile(x, probs = c(0.025, 0.975))
+
+```
+
+and a 95% confidence interval for $Y$ is approximately (-1.96, 1.96)
+
+```{r}
+
+quantile(y, probs = c(0.025, 0.975))
+
+```
+
+Notably, these confidence limits overlap. However, elementary probability tells us that $$Var(X-Y) = Var(X) + Var(Y) - 2 \times Cov(X,Y) = 20/10 - 18/10 = 1/5$$. Thus, a 95% confidence limit for $X-Y$ is approximately (0.12, 1.88)
+
+```{r}
+
+quantile(x-y, probs = c(0.025, 0.975))
+
+```
+
